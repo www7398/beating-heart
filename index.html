@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>跳动的心 ❤</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;}
+  #c{display:block;width:100vw;height:100vh;}
+  #hint{position:fixed;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom));
+        text-align:center;color:rgba(255,150,180,.5);
+        font:12px/1.6 system-ui,-apple-system,"PingFang SC","Microsoft Yahei",sans-serif;
+        pointer-events:none;transition:opacity 1.5s;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">改中间的文字：在网址后面加 ?t=想写的话</div>
+<script>
+'use strict';
+var canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+var qs = new URLSearchParams(location.search);
+var TEXT = qs.get('t') !== null ? qs.get('t').slice(0, 14) : 'I ❤ You';
+
+var W, H, DPR, CX, CY, S;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  CX = W / 2; CY = H / 2 - H * 0.02;
+  S = Math.min(W / 36, H / 34);
+}
+addEventListener('resize', resize); resize();
+
+// 李峋爱心参数方程
+function hx(t) { return 16 * Math.pow(Math.sin(t), 3); }
+function hy(t) { return 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t); }
+
+// 预渲染发光贴图（手机上比 shadowBlur 快一个量级）
+function makeSprite(r, g, b) {
+  var c = document.createElement('canvas'); c.width = c.height = 64;
+  var g2 = c.getContext('2d');
+  var grad = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0,   'rgba(' + r + ',' + g + ',' + b + ',1)');
+  grad.addColorStop(.25, 'rgba(' + r + ',' + g + ',' + b + ',.85)');
+  grad.addColorStop(.6,  'rgba(' + r + ',' + g + ',' + b + ',.22)');
+  grad.addColorStop(1,   'rgba(' + r + ',' + g + ',' + b + ',0)');
+  g2.fillStyle = grad; g2.fillRect(0, 0, 64, 64);
+  return c;
+}
+var SPR = {
+  core: makeSprite(255, 235, 245),
+  pink: makeSprite(255, 60, 120),
+  deep: makeSprite(230, 20, 80),
+  soft: makeSprite(255, 140, 180)
+};
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+var smallScreen = W * H < 380000;
+var N_EDGE = smallScreen ? 150 : 230,
+    N_FILL = smallScreen ? 260 : 440,
+    N_HALO = smallScreen ? 90 : 130;
+
+var EDGE = [], FILL = [], HALO = [], STARS = [];
+(function build() {
+  var i, t;
+  for (i = 0; i < N_EDGE; i++) {
+    t = rand(0, Math.PI * 2);
+    EDGE.push({ t: t, j: rand(.02, .16), sp: rand(.5, 1.6), ph: rand(0, 7),
+                size: rand(1.6, 3.4), spr: pick([SPR.core, SPR.pink, SPR.pink, SPR.soft]) });
+  }
+  for (i = 0; i < N_FILL; i++) {
+    t = rand(0, Math.PI * 2);
+    var k = 0.18 + 0.8 * Math.pow(Math.random(), 0.35);
+    FILL.push({ t: t, k: k, ph: rand(0, 7), sp: rand(.4, 1.2), size: rand(1.2, 3),
+                spr: pick([SPR.pink, SPR.deep, SPR.soft]) });
+  }
+  for (i = 0; i < N_HALO; i++) {
+    t = rand(0, Math.PI * 2);
+    HALO.push({ t: t, size: rand(1, 2.6), spr: Math.random() < .3 ? SPR.soft : SPR.deep });
+  }
+  for (i = 0; i < 70; i++) {
+    STARS.push({ x: Math.random(), y: Math.random(), r: rand(.4, 1.3), ph: rand(0, 7), sp: rand(.3, 1) });
+  }
+})();
+
+// 双峰心跳（咚-咚）
+var T = 1.7;
+function beat(p) {
+  function th(c, w, a) {
+    var d = Math.abs(p - c); d = Math.min(d, 1 - d);
+    return d > w ? 0 : a * Math.pow(Math.cos(d / w * Math.PI / 2), 2);
+  }
+  return th(0.06, 0.16, 1) + th(0.32, 0.14, 0.55);
+}
+
+var t0 = null;
+function frame(ts) {
+  if (t0 === null) t0 = ts;
+  var time = (ts - t0) / 1000;
+  var p = (time % T) / T;
+  var sc = (1 + 0.16 * beat(p)) * S;
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  // 背景星点
+  ctx.globalCompositeOperation = 'lighter';
+  var i, st, a, x, y, d;
+  for (i = 0; i < STARS.length; i++) {
+    st = STARS[i];
+    a = Math.max(0, 0.25 + 0.35 * Math.sin(time * st.sp + st.ph)) * 0.55;
+    x = st.x * W; y = st.y * H; d = st.r * 3;
+    ctx.globalAlpha = a;
+    ctx.drawImage(SPR.soft, x - d, y - d, d * 2, d * 2);
+  }
+
+  function draw(px, py, sz, spr, alpha) {
+    d = sz * 4;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(spr, CX + px * sc - d, CY + py * sc - d, d * 2, d * 2);
+  }
+
+  // 光晕环：两圈交替外扩
+  var hl = (time * 0.62) % 1, ring, r2, j, h, tt, pos;
+  for (r2 = 0; r2 < 2; r2++) {
+    ring = (hl + r2 * 0.5) % 1;
+    var k = 1.05 + ring * 0.9, ha = (1 - ring) * 0.32;
+    for (j = 0; j < HALO.length; j++) {
+      h = HALO[j]; tt = h.t;
+      pos = [hx(tt) * k, -hy(tt) * k];
+      draw(pos[0], pos[1], h.size * (1 + ring * 0.5), h.spr,
+           ha * (0.5 + 0.5 * Math.sin(time * 2 + tt * 5)));
+    }
+  }
+
+  // 内部填充粒子
+  for (j = 0; j < FILL.length; j++) {
+    var f = FILL[j];
+    var tw = 0.55 + 0.45 * Math.sin(time * f.sp * 2 + f.ph);
+    draw(hx(f.t) * f.k, -hy(f.t) * f.k, f.size, f.spr, 0.75 * tw);
+  }
+
+  // 轮廓高亮粒子（每帧微抖动 = 原版闪烁感）
+  for (j = 0; j < EDGE.length; j++) {
+    var e = EDGE[j];
+    var tw2 = 0.6 + 0.4 * Math.sin(time * e.sp * 2.2 + e.ph);
+    draw(hx(e.t) + rand(-e.j, e.j), -hy(e.t) + rand(-e.j, e.j),
+         e.size * (0.8 + 0.4 * tw2), e.spr, 0.9 * tw2);
+  }
+
+  // 心中文字
+  if (TEXT) {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = 'rgba(255,225,238,.95)';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    var fs = Math.max(14, 4.2 * sc);
+    ctx.font = '600 ' + fs + 'px system-ui,-apple-system,"PingFang SC","Microsoft Yahei",sans-serif';
+    ctx.shadowColor = 'rgba(255,80,140,.9)';
+    ctx.shadowBlur = 18;
+    ctx.fillText(TEXT, CX, CY + sc * 0.5);
+    ctx.shadowBlur = 0;
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// 点一下进全屏（手机观看更沉浸）
+addEventListener('click', function () {
+  if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(function () {});
+  }
+});
+setTimeout(function () { document.getElementById('hint').style.opacity = 0; }, 6000);
+</script>
+</body>
+</html>
